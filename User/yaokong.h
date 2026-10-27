@@ -20,18 +20,24 @@
  */
 #define SBUS_CH_THROTTLE   1   /* 右摇杆上下 = CH2 升降（油门） */
 #define SBUS_CH_STEER      0   /* 右摇杆左右 = CH1 副翼（方向） */
+#define SBUS_CH_SERVO      2U  /* VOFA I8 = CH3 左摇杆左右，同时控制两个舵机 */
+#define SBUS_CH_AVOIDANCE  7U  /* CH8 / VOFA I13: exactly 1792 enables avoidance */
+#define SBUS_AVOIDANCE_ON_VALUE 1792U
 
 /* 精确匹配实测原始值：CH5 / VOFA I10 控制开关1，
- * CH6 / VOFA I11 控制开关2；其他值关闭。开关3～5保持关闭。
+ * CH6 / VOFA I11 控制开关2，CH7 / VOFA I12 控制开关3；
+ * 其他值关闭对应开关。开关4～5保持关闭。
  */
 #define SBUS_CH_SWITCH_1        4U
 #define SBUS_CH_SWITCH_2        5U
+#define SBUS_CH_SWITCH_3        6U
 #define SBUS_SWITCH_ON_VALUE   1792U
 
 #define SBUS_CENTER        992 // 通道中位值（992 = 1500us）
 #define SBUS_DEADZONE      40  // 中位死区，防止摇杆抖动
 #define SBUS_FULL_RANGE    819 // 标准行程满偏值（992-172≈819），可改大兼容扩展行程
-#define SBUS_DIR_SWITCH_DELAY_MS 50 // 换向安全延时：先停车等电机减速再切 F/R（JGB37-520 禁止运转中换向）
+#define SBUS_DIR_BRAKE_MS        500U /* PWM清零后等待，再切F/R；需实车确认已停转 */
+#define SBUS_DIR_SETTLE_MS       50U  /* F/R切换后继续保持PWM为0 */
 #define MOTOR_SPEED_MAX    999// 电机最大 PWM（TIM1/TIM5 ARR=999，最大约 999）
 
 /* ========== 六轮映射 ========== */
@@ -81,7 +87,10 @@ void yaokong_process_data(uint8_t *data, uint16_t size);
 
 /**
  * @brief  遥控控制主函数（主循环调用）
- * @note   右摇杆控制六轮差速，CH5/CH6 分别控制电子开关1/2；失联时停车并关闭开关
+ * @note   右摇杆控制六轮差速，CH3 控制两个舵机，CH5/CH6/CH7 控制开关1/2/3；
+ *         CH8 / VOFA I13 严格等于1792时，由避障逻辑接管车轮；其他值恢复原遥控；
+ *         输入200/1000/1800：PE5输出1100/1500/1900us，PE6输出1900/1500/1100us；
+ *         失联时停车、关开关并回中
  */
 void yaokong_control(void);
 /* Valid SBUS received, no failsafe, most recent frame within 200ms. */

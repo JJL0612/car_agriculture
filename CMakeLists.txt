@@ -33,6 +33,8 @@ enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
+        User/avoidance.c
+        User/avoidance.h
         User/vofa.c
         User/vofa.h
         User/rc_switch.c

@@ -52,7 +52,7 @@ extern uint8_t tofsense_uart6_rx_buf[TOFSENSE_RX_BUF_SIZE];
 /* ========== 调试用全局变量 ==========
  * 解析出最新一帧时同步镜像到下面这些扁平数组，
  * 调试器（CLion/Keil Watch 窗口）里直接查看即可，无需展开结构体。
- * 下标 = 槽位 0/1/2，对应 ID 0/1/2（安装位置左/中/右，自行约定）。 */
+ * 下标 = 槽位 0/1/2，对应 ID 0/1/2（安装位置左前/中间/右前）。 */
 extern float   tofsense_distance_cm[TOFSENSE_NUM_SENSORS]; /* 各槽位当前距离(cm)，无目标时为负 */
 extern float   tofsense_distance_m[TOFSENSE_NUM_SENSORS];  /* 各槽位当前距离(m) */
 extern uint8_t tofsense_valid[TOFSENSE_NUM_SENSORS];       /* 1=校验通过且测量有效(dis_status==0) */

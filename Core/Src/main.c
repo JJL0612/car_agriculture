@@ -125,9 +125,7 @@ int main(void)
   while (1)
   {
 
-      //servo_test_task();   // 两个舵机随时间周期性往返摆动（测试用）
-
-      yaokong_control();   // 遥控模式：左摇杆控制小车（无按键任务时生效）
+      yaokong_control();   // 右摇杆控制小车，CH3 / VOFA I8 同步控制两个舵机
       vofa_task();        // USART6 PC6: VOFA JustFloat, 115200 8N1
       tofsense_poll();     // TOFSense 查询调度（查询模式下按 ID 轮询）、
       tofsense_debug_task(); // TOFSense 诊断打印（排查级联问题时用，串口1 115200）

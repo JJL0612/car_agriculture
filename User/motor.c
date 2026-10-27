@@ -1,8 +1,8 @@
 #include "motor.h"
 
-/* Servo test: 1000..2000 us, 2 s each way, update every PWM frame. */
-#define SERVO_TEST_MIN_US       1000U
-#define SERVO_TEST_MAX_US       2000U
+/* Servo test: bounded to the same travel as remote control. */
+#define SERVO_TEST_MIN_US       SERVO_MIN_US
+#define SERVO_TEST_MAX_US       SERVO_MAX_US
 #define SERVO_TEST_HALF_MS      2000U
 #define SERVO_TEST_UPDATE_MS    20U
 
@@ -42,8 +42,7 @@ void motor_init(void)
     __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_4, 0);
 
     /* 设置两个舵机的初始脉宽为 1500μs */
-    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 1800);
-    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, 1800);
+    servo_set_pulse_us(SERVO_CENTER_US);
 
     /* 启动后，硬件持续自动输出 PWM */
     HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
@@ -51,6 +50,26 @@ void motor_init(void)
 
     servo_test_last_tick = HAL_GetTick();
     servo_test_phase_ms = SERVO_TEST_HALF_MS / 2U;
+}
+
+void servo_set_pulse_us(uint16_t pulse_us)
+{
+    if (pulse_us < SERVO_MIN_US) pulse_us = SERVO_MIN_US;
+    if (pulse_us > SERVO_MAX_US) pulse_us = SERVO_MAX_US;
+
+    /* TIM9: 1 us/tick, 20 ms period; PE6 mirrors PE5 around 1500 us. */
+    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, pulse_us);
+    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2,
+                          SERVO_MIN_US + SERVO_MAX_US - pulse_us);
+}
+
+void servo_set_remote_value(uint16_t value)
+{
+    /* Clamp before subtracting to prevent unsigned underflow. */
+    if (value < 200U) value = 200U;
+    if (value > 1800U) value = 1800U;
+
+    servo_set_pulse_us((uint16_t)(SERVO_MIN_US + (value - 200U) / 2U));
 }
 
 void servo_test_task(void)
@@ -74,8 +93,7 @@ void servo_test_task(void)
                + (SERVO_TEST_MAX_US - SERVO_TEST_MIN_US) * ramp_ms
                  / SERVO_TEST_HALF_MS;
 
-    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, pulse_us);
-    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, pulse_us);
+    servo_set_pulse_us((uint16_t)pulse_us);
 }
 
 void motor_forward(int speed1, int speed2, int speed3, int speed4, int speed5, int speed6)

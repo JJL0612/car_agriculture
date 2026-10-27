@@ -2,6 +2,7 @@
 #include "motor.h"
 #include "tofsense.h"
 #include "rc_switch.h"
+#include "avoidance.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -110,6 +111,50 @@ static void set_left_direction(uint8_t forward)
 /* 记录当前两侧方向，用于安全换向检测（1 = 前进） */
 static uint8_t left_dir_state  = 1;
 static uint8_t right_dir_state = 1;
+
+/* Both remote and automatic driving pass through this nonblocking guard.
+ * Direction pins may change only after PWM has remained zero for BRAKE_MS.
+ * A changing request restarts braking; after pin changes PWM stays zero again.
+ */
+static uint8_t drive_direction_ready(uint8_t left_fwd, uint8_t right_fwd)
+{
+    static uint8_t phase; /* 0=running, 1=braking, 2=direction settling */
+    static uint8_t pending_left, pending_right;
+    static uint32_t phase_start;
+    uint32_t now = HAL_GetTick();
+
+    if (phase == 2U) {
+        motor_forward(0, 0, 0, 0, 0, 0);
+        if (now - phase_start < SBUS_DIR_SETTLE_MS) return 0;
+        phase = 0;
+    }
+    if (phase == 0U) {
+        if (left_fwd == left_dir_state && right_fwd == right_dir_state) return 1;
+        motor_forward(0, 0, 0, 0, 0, 0);
+        pending_left = left_fwd;
+        pending_right = right_fwd;
+        phase_start = now;
+        phase = 1;
+        return 0;
+    }
+
+    motor_forward(0, 0, 0, 0, 0, 0);
+    if (left_fwd != pending_left || right_fwd != pending_right) {
+        pending_left = left_fwd;
+        pending_right = right_fwd;
+        phase_start = now;
+        return 0;
+    }
+    if (now - phase_start < SBUS_DIR_BRAKE_MS) return 0;
+
+    set_left_direction(pending_left);
+    set_right_direction(pending_right);
+    left_dir_state = pending_left;
+    right_dir_state = pending_right;
+    phase_start = now;
+    phase = 2;
+    return 0;
+}
 
 /* ========== 初始化 ========== */
 
@@ -321,7 +366,10 @@ void yaokong_debug_task(void)
 /* ========== 遥控控制 ========== */
 
 _Static_assert(SBUS_CH_SWITCH_1 < 16U, "Invalid switch 1 channel");
+_Static_assert(SBUS_CH_SERVO < 16U, "Invalid servo channel");
+_Static_assert(SBUS_CH_AVOIDANCE < 16U, "Invalid avoidance channel");
 _Static_assert(SBUS_CH_SWITCH_2 < 16U, "Invalid switch 2 channel");
+_Static_assert(SBUS_CH_SWITCH_3 < 16U, "Invalid switch 3 channel");
 _Static_assert(SBUS_SWITCH_ON_VALUE <= 2047U, "Invalid SBUS switch value");
 
 uint8_t yaokong_link_ok(void)
@@ -340,15 +388,20 @@ void yaokong_control(void)
 {
     yaokong_debug_task();    /* 联调阶段的调试打印（可关） */
 
-    /* 未收到信号 / 失控 / 超过 200ms 无新帧：停车并关闭五路开关 */
+    /* 未收到信号 / 失控 / 超过 200ms 无新帧：停车、关闭开关、舵机回中 */
     if (!yaokong_link_ok())
     {
+        avoidance_reset();
         RC_Switch_AllOff();
         motor_forward(0, 0, 0, 0, 0, 0);
+        servo_set_pulse_us(SERVO_CENTER_US);
         return;
     }
 
-    /* Exact 1792 match, independent commands; switches 3..5 stay OFF. */
+    /* CH3 / VOFA I8: PE5 = 1100/1500/1900, PE6 = 1900/1500/1100 us. */
+    servo_set_remote_value(sbus_ch[SBUS_CH_SERVO]);
+
+    /* Exact 1792 match, independent commands; switches 4..5 stay OFF. */
     uint8_t switch_mask = 0U;
     if (sbus_ch[SBUS_CH_SWITCH_1] == SBUS_SWITCH_ON_VALUE) {
         switch_mask |= 0x01U;
@@ -356,38 +409,56 @@ void yaokong_control(void)
     if (sbus_ch[SBUS_CH_SWITCH_2] == SBUS_SWITCH_ON_VALUE) {
         switch_mask |= 0x02U;
     }
+    if (sbus_ch[SBUS_CH_SWITCH_3] == SBUS_SWITCH_ON_VALUE) {
+        switch_mask |= 0x04U;
+    }
     RC_Switch_SetMask(switch_mask);
 
-    /* 通道值减中位：-992 ~ +1055（标准行程约 -819 ~ +819） */
-    throttle = (int)sbus_ch[SBUS_CH_THROTTLE] - SBUS_CENTER;
-    steer    = (int)sbus_ch[SBUS_CH_STEER] - SBUS_CENTER;
+    uint8_t auto_mode = sbus_ch[SBUS_CH_AVOIDANCE] == SBUS_AVOIDANCE_ON_VALUE;
+    if (auto_mode) {
+        AvoidanceInput input;
+        /* Distances/status/timestamps must belong to the same received samples. */
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        for (unsigned i = 0; i < 3U; ++i) {
+            input.cm[i] = tofsense_distance_cm[i];
+            input.valid[i] = tofsense_valid[i];
+            input.updated[i] = tofsense_last_update[i];
+        }
+        __set_PRIMASK(primask);
+        int auto_left, auto_right;
+        avoidance_step(&input, HAL_GetTick(), &auto_left, &auto_right);
+        left = auto_left;
+        right = auto_right;
+    } else {
+        avoidance_reset();
+        /* 通道值减中位：-992 ~ +1055（标准行程约 -819 ~ +819） */
+        throttle = (int)sbus_ch[SBUS_CH_THROTTLE] - SBUS_CENTER;
+        steer    = (int)sbus_ch[SBUS_CH_STEER] - SBUS_CENTER;
 
-    /* 中位死区，防摇杆抖动 */
-    if (throttle > -SBUS_DEADZONE && throttle < SBUS_DEADZONE) throttle = 0;
-    if (steer    > -SBUS_DEADZONE && steer    < SBUS_DEADZONE) steer    = 0;
+        /* 中位死区，防摇杆抖动 */
+        if (throttle > -SBUS_DEADZONE && throttle < SBUS_DEADZONE) throttle = 0;
+        if (steer    > -SBUS_DEADZONE && steer    < SBUS_DEADZONE) steer    = 0;
 
-    /* 差速：右推转向时右轮减速（甚至反转），小车右转 */
-    left  = clamp_i(throttle + steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
-    right = clamp_i(throttle - steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
-
-    /* 负值 = 该侧电机反转 */
-    uint8_t left_fwd  = (left  >= 0);
-    uint8_t right_fwd = (right >= 0);
-
-    /* 安全换向：JGB37-520 禁止运转中切换 F/R（会损坏内部电路），
-     * 方向变化时先停 -> 切方向 -> 延时等电机减速 -> 再给速度 */
-    if (left_fwd != left_dir_state || right_fwd != right_dir_state)
-    {
-        motor_forward(0, 0, 0, 0, 0, 0);
-        set_left_direction(left_fwd);
-        set_right_direction(right_fwd);
-        HAL_Delay(SBUS_DIR_SWITCH_DELAY_MS);
-        left_dir_state  = left_fwd;
-        right_dir_state = right_fwd;
+        /* 差速：右推转向时右轮减速（甚至反转），小车右转 */
+        left  = clamp_i(throttle + steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
+        right = clamp_i(throttle - steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
     }
 
-    speeds[MOTOR_L1] = speeds[MOTOR_L2] = speeds[MOTOR_L3] = speed_map(left);
-    speeds[MOTOR_R1] = speeds[MOTOR_R2] = speeds[MOTOR_R3] = speed_map(right);
+    /* Negative commands reverse; stopped wheels keep their current direction. */
+    uint8_t left_fwd  = left == 0 ? left_dir_state : (left > 0);
+    uint8_t right_fwd = right == 0 ? right_dir_state : (right > 0);
+
+    if (!drive_direction_ready(left_fwd, right_fwd)) {
+        for (unsigned i = 0; i < 6U; ++i) speeds[i] = 0;
+        return;
+    }
+
+    /* F/R carries the sign; timer compare registers receive magnitude only. */
+    int left_pwm = auto_mode ? (left < 0 ? -left : left) : speed_map(left);
+    int right_pwm = auto_mode ? (right < 0 ? -right : right) : speed_map(right);
+    speeds[MOTOR_L1] = speeds[MOTOR_L2] = speeds[MOTOR_L3] = left_pwm;
+    speeds[MOTOR_R1] = speeds[MOTOR_R2] = speeds[MOTOR_R3] = right_pwm;
 
     motor_forward(speeds[0], speeds[1], speeds[2],
                   speeds[3], speeds[4], speeds[5]);
