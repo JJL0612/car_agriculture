@@ -2,7 +2,6 @@
 #include "motor.h"
 #include "tofsense.h"
 #include "rc_switch.h"
-#include "avoidance.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -16,6 +15,8 @@ uint8_t sbus_rx_buf[256];          // DMA 接收缓冲（风格同 jy62）
 volatile uint8_t  sbus_ready     = 0;
 volatile uint8_t  sbus_failsafe  = 0;
 volatile uint16_t sbus_ch[16]    = {0};
+
+static volatile uint8_t servo_control_ready;
 
 static volatile uint32_t sbus_last_tick = 0;  // 最近一次完整帧的时间戳
 
@@ -169,6 +170,8 @@ static uint8_t drive_direction_ready(uint8_t left_fwd, uint8_t right_fwd)
  */
 void yaokong_init(void)
 {
+    servo_control_ready = 0U;
+
     /* 重新配置 USART2（GPIO 已由 CubeMX 配好，HAL 会直接改写寄存器） */
     huart2.Init.BaudRate   = 100000;
     huart2.Init.WordLength = UART_WORDLENGTH_9B;   // 8E2：8数据位 + 1偶校验
@@ -194,6 +197,7 @@ void yaokong_init(void)
 
     /* 启动 DMA 空闲接收（同 jy62）：IDLE 事件触发后由回调重新启动 */
     HAL_UARTEx_ReceiveToIdle_DMA(&huart2, sbus_rx_buf, sizeof(sbus_rx_buf));
+    servo_control_ready = 1U;
 }
 
 /* ========== SBUS 帧解析（带跨段拼接） ========== */
@@ -367,7 +371,7 @@ void yaokong_debug_task(void)
 
 _Static_assert(SBUS_CH_SWITCH_1 < 16U, "Invalid switch 1 channel");
 _Static_assert(SBUS_CH_SERVO < 16U, "Invalid servo channel");
-_Static_assert(SBUS_CH_AVOIDANCE < 16U, "Invalid avoidance channel");
+_Static_assert(SBUS_CH_SWITCH_45 < 16U, "Invalid switch 4/5 channel");
 _Static_assert(SBUS_CH_SWITCH_2 < 16U, "Invalid switch 2 channel");
 _Static_assert(SBUS_CH_SWITCH_3 < 16U, "Invalid switch 3 channel");
 _Static_assert(SBUS_SWITCH_ON_VALUE <= 2047U, "Invalid SBUS switch value");
@@ -376,6 +380,24 @@ uint8_t yaokong_link_ok(void)
 {
     return sbus_ready && !sbus_failsafe &&
            (HAL_GetTick() - sbus_last_tick) <= 200U;
+}
+
+/* Sole runtime owner of servo PWM; called by SysTick every 1 ms.
+ * UART/OLED work in the main loop cannot delay the smoothing updates.
+ */
+void yaokong_servo_tick(void)
+{
+    static uint8_t elapsed_ms;
+    if (!servo_control_ready) return;
+    if (++elapsed_ms < SERVO_UPDATE_MS) return;
+    elapsed_ms = 0U;
+
+    if (!yaokong_link_ok()) {
+        /* Immediate failsafe also resets the smoothing position to center. */
+        servo_center();
+        return;
+    }
+    servo_set_remote_value(sbus_ch[SBUS_CH_SERVO]);
 }
 
 /**
@@ -391,17 +413,14 @@ void yaokong_control(void)
     /* 未收到信号 / 失控 / 超过 200ms 无新帧：停车、关闭开关、舵机回中 */
     if (!yaokong_link_ok())
     {
-        avoidance_reset();
         RC_Switch_AllOff();
         motor_forward(0, 0, 0, 0, 0, 0);
-        servo_set_pulse_us(SERVO_CENTER_US);
         return;
     }
 
-    /* CH3 / VOFA I8: PE5 = 1100/1500/1900, PE6 = 1900/1500/1100 us. */
-    servo_set_remote_value(sbus_ch[SBUS_CH_SERVO]);
+    /* CH3 servos are updated independently by yaokong_servo_tick(). */
 
-    /* Exact 1792 match, independent commands; switches 4..5 stay OFF. */
+    /* Exact 1792 match; CH8 controls switches 4 and 5 together. */
     uint8_t switch_mask = 0U;
     if (sbus_ch[SBUS_CH_SWITCH_1] == SBUS_SWITCH_ON_VALUE) {
         switch_mask |= 0x01U;
@@ -412,38 +431,23 @@ void yaokong_control(void)
     if (sbus_ch[SBUS_CH_SWITCH_3] == SBUS_SWITCH_ON_VALUE) {
         switch_mask |= 0x04U;
     }
+    if (sbus_ch[SBUS_CH_SWITCH_45] == SBUS_SWITCH_ON_VALUE) {
+        switch_mask |= 0x18U;
+    }
     RC_Switch_SetMask(switch_mask);
 
-    uint8_t auto_mode = sbus_ch[SBUS_CH_AVOIDANCE] == SBUS_AVOIDANCE_ON_VALUE;
-    if (auto_mode) {
-        AvoidanceInput input;
-        /* Distances/status/timestamps must belong to the same received samples. */
-        uint32_t primask = __get_PRIMASK();
-        __disable_irq();
-        for (unsigned i = 0; i < 3U; ++i) {
-            input.cm[i] = tofsense_distance_cm[i];
-            input.valid[i] = tofsense_valid[i];
-            input.updated[i] = tofsense_last_update[i];
-        }
-        __set_PRIMASK(primask);
-        int auto_left, auto_right;
-        avoidance_step(&input, HAL_GetTick(), &auto_left, &auto_right);
-        left = auto_left;
-        right = auto_right;
-    } else {
-        avoidance_reset();
-        /* 通道值减中位：-992 ~ +1055（标准行程约 -819 ~ +819） */
-        throttle = (int)sbus_ch[SBUS_CH_THROTTLE] - SBUS_CENTER;
-        steer    = (int)sbus_ch[SBUS_CH_STEER] - SBUS_CENTER;
+    /* CH8 no longer changes driving mode; wheels always follow the sticks. */
+    /* 通道值减中位：-992 ~ +1055（标准行程约 -819 ~ +819） */
+    throttle = (int)sbus_ch[SBUS_CH_THROTTLE] - SBUS_CENTER;
+    steer    = (int)sbus_ch[SBUS_CH_STEER] - SBUS_CENTER;
 
-        /* 中位死区，防摇杆抖动 */
-        if (throttle > -SBUS_DEADZONE && throttle < SBUS_DEADZONE) throttle = 0;
-        if (steer    > -SBUS_DEADZONE && steer    < SBUS_DEADZONE) steer    = 0;
+    /* 中位死区，防摇杆抖动 */
+    if (throttle > -SBUS_DEADZONE && throttle < SBUS_DEADZONE) throttle = 0;
+    if (steer    > -SBUS_DEADZONE && steer    < SBUS_DEADZONE) steer    = 0;
 
-        /* 差速：右推转向时右轮减速（甚至反转），小车右转 */
-        left  = clamp_i(throttle + steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
-        right = clamp_i(throttle - steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
-    }
+    /* 差速：右推转向时右轮减速（甚至反转），小车右转 */
+    left  = clamp_i(throttle + steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
+    right = clamp_i(throttle - steer, -MOTOR_SPEED_MAX, MOTOR_SPEED_MAX);
 
     /* Negative commands reverse; stopped wheels keep their current direction. */
     uint8_t left_fwd  = left == 0 ? left_dir_state : (left > 0);
@@ -455,8 +459,8 @@ void yaokong_control(void)
     }
 
     /* F/R carries the sign; timer compare registers receive magnitude only. */
-    int left_pwm = auto_mode ? (left < 0 ? -left : left) : speed_map(left);
-    int right_pwm = auto_mode ? (right < 0 ? -right : right) : speed_map(right);
+    int left_pwm = speed_map(left);
+    int right_pwm = speed_map(right);
     speeds[MOTOR_L1] = speeds[MOTOR_L2] = speeds[MOTOR_L3] = left_pwm;
     speeds[MOTOR_R1] = speeds[MOTOR_R2] = speeds[MOTOR_R3] = right_pwm;
 
