@@ -68,7 +68,7 @@ void OLED_ShowString(uint8_t x, uint8_t y, const char *str);
 /**
  * @brief  显示三个 TOFSense 测距传感器的实时距离（单位 cm）
  *         布局（6x8 小字体，每行占 1 页）：
- *           page 0：标题 "DIST(CM)"
+ *           page 0：L:链路 E10/E12:两只SG90目标角度
  *           page 1~3：S0 / S1 / S2 的距离，固定宽度 xxx.x，
  *                     无有效数据时显示 "--.-"
  * @note   需要包含 tofsense.h；在主循环中周期调用即可

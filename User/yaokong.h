@@ -24,12 +24,13 @@
 
 /* 精确匹配实测原始值：CH5 / VOFA I10 控制开关1，
  * CH6 / VOFA I11 控制开关2，CH7 / VOFA I12 控制开关3；
- * CH8 / VOFA I13 同时控制开关4、5，其他值关闭对应开关。
+ * CH8 / VOFA I13 控制 SG90：1792时 PE10=90度/PE12=0度，其他值相反。
  */
 #define SBUS_CH_SWITCH_1        4U
 #define SBUS_CH_SWITCH_2        5U
 #define SBUS_CH_SWITCH_3        6U
-#define SBUS_CH_SWITCH_45       7U
+#define SBUS_CH_AUX_SERVOS      7U
+#define SBUS_AUX_SERVO_90_VALUE 1792U
 #define SBUS_SWITCH_ON_VALUE   1792U
 
 #define SBUS_CENTER        992 // 通道中位值（992 = 1500us）
@@ -87,7 +88,7 @@ void yaokong_process_data(uint8_t *data, uint16_t size);
 /**
  * @brief  遥控控制主函数（主循环调用）
  * @note   右摇杆控制六轮差速，CH3 控制两个舵机，CH5/CH6/CH7 控制开关1/2/3；
- *         CH8 / VOFA I13 严格等于1792时同时开启开关4、5，否则同时关闭；
+ *         CH8=1792时 PE10=90度、PE12=0度；其他值/失联时 PE10=0度、PE12=90度；
  *         CH3 分上/中/下三档，使用独立标定端点，带边界防抖和平滑同步；
  *         失联时停车、关开关并回中
  */

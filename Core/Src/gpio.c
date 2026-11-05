@@ -52,9 +52,9 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
-  /* Five RC-switch signal outputs: begin low, TIM6 supplies pulses. */
-  HAL_GPIO_WritePin(GPIOE, RC_SW1_Pin|RC_SW2_Pin|RC_SW3_Pin|RC_SW4_Pin|RC_SW5_Pin, GPIO_PIN_RESET);
-  GPIO_InitStruct.Pin = RC_SW1_Pin|RC_SW2_Pin|RC_SW3_Pin|RC_SW4_Pin|RC_SW5_Pin;
+  /* Three RC-switch and two SG90 signal outputs: begin low, TIM6 supplies pulses. */
+  HAL_GPIO_WritePin(GPIOE, RC_SW1_Pin|RC_SW2_Pin|RC_SW3_Pin|AUX_SERVO1_Pin|AUX_SERVO2_Pin, GPIO_PIN_RESET);
+  GPIO_InitStruct.Pin = RC_SW1_Pin|RC_SW2_Pin|RC_SW3_Pin|AUX_SERVO1_Pin|AUX_SERVO2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

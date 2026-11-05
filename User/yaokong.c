@@ -371,7 +371,8 @@ void yaokong_debug_task(void)
 
 _Static_assert(SBUS_CH_SWITCH_1 < 16U, "Invalid switch 1 channel");
 _Static_assert(SBUS_CH_SERVO < 16U, "Invalid servo channel");
-_Static_assert(SBUS_CH_SWITCH_45 < 16U, "Invalid switch 4/5 channel");
+_Static_assert(SBUS_CH_AUX_SERVOS < 16U, "Invalid SG90 channel");
+_Static_assert(SBUS_AUX_SERVO_90_VALUE <= 2047U, "Invalid SG90 trigger");
 _Static_assert(SBUS_CH_SWITCH_2 < 16U, "Invalid switch 2 channel");
 _Static_assert(SBUS_CH_SWITCH_3 < 16U, "Invalid switch 3 channel");
 _Static_assert(SBUS_SWITCH_ON_VALUE <= 2047U, "Invalid SBUS switch value");
@@ -395,9 +396,11 @@ void yaokong_servo_tick(void)
     if (!yaokong_link_ok()) {
         /* Immediate failsafe also resets the smoothing position to center. */
         servo_center();
+        Aux_Servo_Set90(0U);
         return;
     }
     servo_set_remote_value(sbus_ch[SBUS_CH_SERVO]);
+    Aux_Servo_Set90(sbus_ch[SBUS_CH_AUX_SERVOS] == SBUS_AUX_SERVO_90_VALUE);
 }
 
 /**
@@ -414,13 +417,14 @@ void yaokong_control(void)
     if (!yaokong_link_ok())
     {
         RC_Switch_AllOff();
+        Aux_Servo_Set90(0U);
         motor_forward(0, 0, 0, 0, 0, 0);
         return;
     }
 
     /* CH3 servos are updated independently by yaokong_servo_tick(). */
 
-    /* Exact 1792 match; CH8 controls switches 4 and 5 together. */
+    /* CH5..CH7 control three switches; CH8 selects the two SG90 positions. */
     uint8_t switch_mask = 0U;
     if (sbus_ch[SBUS_CH_SWITCH_1] == SBUS_SWITCH_ON_VALUE) {
         switch_mask |= 0x01U;
@@ -431,10 +435,8 @@ void yaokong_control(void)
     if (sbus_ch[SBUS_CH_SWITCH_3] == SBUS_SWITCH_ON_VALUE) {
         switch_mask |= 0x04U;
     }
-    if (sbus_ch[SBUS_CH_SWITCH_45] == SBUS_SWITCH_ON_VALUE) {
-        switch_mask |= 0x18U;
-    }
     RC_Switch_SetMask(switch_mask);
+    Aux_Servo_Set90(sbus_ch[SBUS_CH_AUX_SERVOS] == SBUS_AUX_SERVO_90_VALUE);
 
     /* CH8 no longer changes driving mode; wheels always follow the sticks. */
     /* 通道值减中位：-992 ~ +1055（标准行程约 -819 ~ +819） */

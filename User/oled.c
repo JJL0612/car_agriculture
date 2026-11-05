@@ -5,6 +5,7 @@
 #include "oled.h"
 #include "tofsense.h"
 #include "yaokong.h"
+#include "rc_switch.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -424,18 +425,22 @@ void OLED_ShowString(uint8_t x, uint8_t y, const char *str)
 /**
  * @brief  显示三个 TOFSense 测距传感器的实时距离（单位 cm）
  *         布局（6x8 小字体）：
- *           page 0：标题 "DIST(CM)"
+ *           page 0：L:链路 E10/E12:两只SG90目标角度
  *           page 1~3：S0 / S1 / S2，每行固定 8 字符（"S0:123.4" 或 "S0:  -.-"），
  *                     固定宽度保证数值变化时不会残留旧像素
  * @note   在主循环中周期调用；数据来自 tofsense.c 的全局镜像
  */
 void OLED_ShowDistance(void)
 {
-    char   line[16];
+    char   line[24];
     uint8_t s;
 
-    // 标题
-    OLED_ShowString(0, 0, "DIST(CM)");
+    /* Independent target angles; CH8 remains on page 7. No angle feedback. */
+    uint8_t aux_90 = Aux_Servo_Get90();
+    (void)snprintf(line, sizeof(line), "L:%u E10:%2u E12:%2u   ",
+                   (unsigned)yaokong_link_ok(), aux_90 ? 90U : 0U,
+                   aux_90 ? 0U : 90U);
+    OLED_ShowString(0, 0, line);
 
     // 三个槽位 S0/S1/S2 的实时距离
     for (s = 0; s < TOFSENSE_NUM_SENSORS; s++)

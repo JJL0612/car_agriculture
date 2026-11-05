@@ -63,9 +63,11 @@ static inline void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, uint8_t v
 UART_HandleTypeDef huart1, huart2, huart3;
 static uint32_t now = 1000;
 static uint8_t switch_outputs;
+static uint8_t aux_servo_90;
 static int pwm[6];
 uint32_t HAL_GetTick(void) { return now; }
-HAL_StatusTypeDef RC_Switch_SetMask(uint8_t mask) { switch_outputs = mask; return HAL_OK; }
+HAL_StatusTypeDef RC_Switch_SetMask(uint8_t mask) { assert(mask < 8); switch_outputs = mask; return HAL_OK; }
+void Aux_Servo_Set90(uint8_t enabled) { aux_servo_90 = enabled != 0; }
 void RC_Switch_AllOff(void) { switch_outputs = 0; }
 void motor_forward(int a, int b, int c, int d, int e, int f) {
     pwm[0]=a; pwm[1]=b; pwm[2]=c; pwm[3]=d; pwm[4]=e; pwm[5]=f;
@@ -79,6 +81,7 @@ static void connected(void) {
 }
 static void expect_stopped(void) {
     assert(switch_outputs == 0);
+    assert(aux_servo_90 == 0);
     for (unsigned i=0; i<6; ++i) assert(pwm[i] == 0);
 }
 int main(void) {
@@ -89,7 +92,8 @@ int main(void) {
         for (unsigned channel=0; channel<4; ++channel)
             sbus_ch[4+channel] = combination & (1U << channel) ? 1792 : 992;
         yaokong_control();
-        unsigned expected = (combination & 7U) | ((combination & 8U) ? 0x18U : 0U);
+        unsigned expected = combination & 7U;
+        assert(aux_servo_90 == ((combination & 8U) != 0));
         assert(switch_outputs == expected);
         for (unsigned i=0; i<6; ++i) assert(pwm[i] == 0); /* CH8 cannot start avoidance. */
     }
@@ -97,14 +101,16 @@ int main(void) {
         for (unsigned i=4; i<7; ++i) sbus_ch[i] = 992;
         sbus_ch[7] = raw;
         yaokong_control();
-        assert(switch_outputs == (raw == 1792 ? 0x18 : 0));
+        assert(switch_outputs == 0);
+        assert(aux_servo_90 == (raw == 1792));
     }
     for (unsigned channel=4; channel<8; ++channel) {
         for (unsigned raw=1791; raw<=1793; ++raw) {
             for (unsigned i=4; i<8; ++i) sbus_ch[i] = 992;
             sbus_ch[channel] = raw;
             yaokong_control();
-            unsigned mask = channel == 7 ? 0x18 : 1U << (channel-4);
+            unsigned mask = channel == 7 ? 0 : 1U << (channel-4);
+            assert(aux_servo_90 == (channel == 7 && raw == 1792));
             assert(switch_outputs == (raw == 1792 ? mask : 0));
         }
     }
@@ -116,30 +122,52 @@ int main(void) {
     sbus_ch[7] = 1792;
     yaokong_control();
     for (unsigned i=0; i<6; ++i) assert(pwm[i] == expected_pwm);
-    assert(switch_outputs == 0x18);
+    assert(switch_outputs == 0);
+    assert(aux_servo_90 == 1);
     for (unsigned i=4; i<8; ++i) sbus_ch[i] = 1792;
     yaokong_control();
-    assert(switch_outputs == 0x1F);
+    assert(switch_outputs == 0x07);
+    assert(aux_servo_90 == 1);
     sbus_ready = 0;
     yaokong_control();
     expect_stopped();
     connected();
     yaokong_control();
-    assert(switch_outputs == 0x1F);
+    assert(switch_outputs == 0x07);
+    assert(aux_servo_90 == 1);
     sbus_failsafe = 1;
     yaokong_control();
     expect_stopped();
     connected();
     now += 200;
     yaokong_control();
-    assert(switch_outputs == 0x1F);
+    assert(switch_outputs == 0x07);
+    assert(aux_servo_90 == 1);
     now += 1;
     yaokong_control();
     expect_stopped();
     connected();
     yaokong_control();
-    assert(switch_outputs == 0x1F);
-    puts("PASS: all 16 switch combinations, all CH8 values, exact threshold, paired 4/5 outputs, manual drive preserved, no-frame/failsafe/timeout and recovery");
+    assert(switch_outputs == 0x07);
+    assert(aux_servo_90 == 1);
+    /* SG90s also track CH8 / loss from the 20 ms SysTick path. */
+    servo_control_ready = 1;
+    for (unsigned i=0; i<20; ++i) yaokong_servo_tick();
+    assert(aux_servo_90 == 1);
+    sbus_failsafe = 1;
+    for (unsigned i=0; i<20; ++i) yaokong_servo_tick();
+    assert(aux_servo_90 == 0);
+    connected();
+    sbus_ch[7] = 997;
+    for (unsigned i=0; i<20; ++i) yaokong_servo_tick();
+    assert(aux_servo_90 == 0);
+    sbus_ch[7] = 1792;
+    for (unsigned i=0; i<20; ++i) yaokong_servo_tick();
+    assert(aux_servo_90 == 1);
+    now += 201;
+    for (unsigned i=0; i<20; ++i) yaokong_servo_tick();
+    assert(aux_servo_90 == 0);
+    puts("PASS: 3 switches + SG90 pair, all CH8 values, manual drive preserved, no-frame/failsafe/timeout, SysTick updates and recovery");
 }
 """.replace("@CONTROLLER@", str(ROOT / "User/yaokong.c"))
     (temp / "test.c").write_text(source)

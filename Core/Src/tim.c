@@ -746,7 +746,7 @@ void HAL_TIM_Encoder_MspDeInit(TIM_HandleTypeDef* tim_encoderHandle)
 
 /* USER CODE BEGIN 1 */
 
-/* Dedicated timer for five RC-switch GPIO outputs. No shared motor timers. */
+/* Dedicated timer for three RC switches and two SG90 GPIO outputs. No shared motor timers. */
 void MX_TIM6_Init(void)
 {
     __HAL_RCC_TIM6_CLK_ENABLE();

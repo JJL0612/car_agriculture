@@ -115,7 +115,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   MX_TIM6_Init();
-  RC_Switch_Init();  // 五路电子开关，启动时发送关闭指令
+  RC_Switch_Init();  // 三路电子开关关闭，PE10/PE12到0/90度
   init();
 
   /* USER CODE END 2 */

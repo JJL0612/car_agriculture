@@ -63,10 +63,10 @@ void Error_Handler(void);
 #define RC_SW2_GPIO_Port GPIOE
 #define RC_SW3_Pin GPIO_PIN_8
 #define RC_SW3_GPIO_Port GPIOE
-#define RC_SW4_Pin GPIO_PIN_10
-#define RC_SW4_GPIO_Port GPIOE
-#define RC_SW5_Pin GPIO_PIN_12
-#define RC_SW5_GPIO_Port GPIOE
+#define AUX_SERVO1_Pin GPIO_PIN_10
+#define AUX_SERVO1_GPIO_Port GPIOE
+#define AUX_SERVO2_Pin GPIO_PIN_12
+#define AUX_SERVO2_GPIO_Port GPIOE
 #define KEY1_Pin GPIO_PIN_2
 #define KEY1_GPIO_Port GPIOE
 #define KEY2_Pin GPIO_PIN_3

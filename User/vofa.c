@@ -25,6 +25,7 @@ void vofa_task(void)
     uint32_t motor_pwm[6];
     uint8_t on_mask;
     uint8_t link_ok;
+    uint8_t aux_servo_90;
     uint32_t chunk_count;
     uint32_t frame_count;
     uint16_t last_size;
@@ -45,6 +46,7 @@ void vofa_task(void)
     }
     link_ok = yaokong_link_ok();
     on_mask = RC_Switch_GetMask();
+    aux_servo_90 = Aux_Servo_Get90();
     chunk_count = sbus_chunk_count;
     frame_count = sbus_frame_count;
     last_size = sbus_last_size;
@@ -60,7 +62,7 @@ void vofa_task(void)
     motor_pwm[5] = __HAL_TIM_GET_COMPARE(&htim5, TIM_CHANNEL_4);
     __set_PRIMASK(primask);
 
-    /* Keep the five switch commands next to the link indicator. */
+    /* Preserve numbering: three switches, then two SG90 angle commands. */
     values[VOFA_LINK_OK] = (float)link_ok;
     for (uint8_t i = 0U; i < 16U; ++i) {
         values[VOFA_RC_FIRST + i] = (float)channels[i];
@@ -68,6 +70,8 @@ void vofa_task(void)
     for (uint8_t i = 0U; i < RC_SWITCH_COUNT; ++i) {
         values[VOFA_SWITCH_FIRST + i] = (float)((on_mask >> i) & 1U);
     }
+    values[VOFA_AUX_SERVO_FIRST] = aux_servo_90 ? 90.0f : 0.0f;
+    values[VOFA_AUX_SERVO_FIRST + 1] = aux_servo_90 ? 0.0f : 90.0f;
     values[VOFA_RX_CALLBACKS] = (float)chunk_count;
     values[VOFA_RX_FRAMES] = (float)frame_count;
     values[VOFA_RX_BYTES] = (float)last_size;
